@@ -6845,6 +6845,7 @@
 #include "interface\fonts\vcr_osd_mono.dm"
 #include "modular_armok\code\datums\sprite_accessories.dm"
 #include "modular_armok\code\modules\species\dwarf.dm"
+#include "modular_armok\code\modules\species\kobold.dm"
 #include "modular_tgp\_HELPERS\cmp.dm"
 #include "modular_tgp\_HELPERS\level_traits.dm"
 #include "modular_tgp\_HELPERS\map_helpers.dm"

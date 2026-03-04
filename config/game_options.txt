@@ -376,6 +376,7 @@ ROUNDSTART_RACES plasmaman
 
 ## Dwarf Fortress Races
 ROUNDSTART_RACES dwarf
+ROUNDSTART_RACES kobold
 
 ## Races that are better than humans in some ways, but worse in others
 ROUNDSTART_RACES ethereal
