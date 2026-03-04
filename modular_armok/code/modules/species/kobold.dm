@@ -14,11 +14,11 @@
  *     It's meant to be unlearnable by non-kobolds. That's the whole point.
  */
 
-/// Turf lumcount (0-1) above which a kobold starts squinting. Most station lights sit at ~0.6-0.8.
+/// Turf lumcount (0-1) above which a kobold starts squinting.
 #define KOBOLD_BRIGHT_LIGHT_THRESHOLD 0.5
 /// Turf lumcount below which darkness feels cozy
 #define KOBOLD_COMFY_DARK_THRESHOLD 0.2
-/// Percent-per-second chance to apply a brief blur while being glared
+/// Percent-per-second chance to apply a brief blur while in bright light
 #define KOBOLD_SQUINT_PROB 8
 /// Time a kobold can go without picking something up before their paws start itching
 #define KOBOLD_ACQUISITION_CRAVING_TIME (10 MINUTES)
@@ -31,17 +31,17 @@
 	name = "\improper Kobold"
 	plural_form = "Kobolds"
 	id = SPECIES_KOBOLD
-	examine_limb_id = SPECIES_LIZARD // We're riding on lizard sprites. Kobolds are just worse lizards.
+	examine_limb_id = SPECIES_LIZARD // Riding on lizard sprites. Kobolds are just worse lizards.
 
 	inherent_traits = list(
 		TRAIT_MUTANT_COLORS,            // Scale colour
 		TRAIT_DWARF,                    // Dwarf-height via the height filter
-		TRAIT_ILLITERATE,               // No written kobold language has ever existed. They physically cannot read.
 		TRAIT_GRABWEAKNESS,             // Pushovers — anyone can grab and choke them out
 		TRAIT_LIGHT_STEP,               // Thieves' feet: quiet, avoids caltrops/glass
 		TRAIT_SKITTISH,                 // Cowardly — dives into crates/lockers when grabbed on harm intent
 		TRAIT_FREERUNNING,              // Scrambles over tables fast — good for fleeing
 		TRAIT_TACKLING_FRAIL_ATTACKER,  // Tiny frame splatters against walls when tackling goes wrong
+		TRAIT_THIEF,                    // Core thief trait — reduces steal time, suppresses theft notifications
 	)
 
 	inherent_biotypes = MOB_ORGANIC | MOB_HUMANOID | MOB_REPTILE
@@ -55,7 +55,7 @@
 
 	mutanttongue = /obj/item/organ/tongue/kobold
 	mutanteyes = /obj/item/organ/eyes/kobold
-	mutantbrain = /obj/item/organ/brain/lizard // Reuse lizard brain — nothing special up there
+	mutantbrain = /obj/item/organ/brain/kobold
 
 	species_language_holder = /datum/language_holder/kobold
 
@@ -127,47 +127,7 @@
 	if(kobold.stat >= UNCONSCIOUS)
 		return
 
-	handle_light_sensitivity(kobold, seconds_per_tick)
 	handle_kleptomaniac_urges(kobold)
-
-/**
- * Kobolds evolved in total darkness. Bright light is disorienting and painful.
- *
- * The eyes organ has flash_protect = -1. Anything worn that brings the net eye protection
- * to >= 0 (sunglasses = +1, so net 0) is enough to kill the ambient glare. Welding goggles
- * are overkill but obviously work.
- */
-/datum/species/kobold/proc/handle_light_sensitivity(mob/living/carbon/human/kobold, seconds_per_tick)
-	if(kobold.is_blind())
-		kobold.clear_mood_event("kobold_bright_light")
-		kobold.clear_mood_event("kobold_comfy_dark")
-		return
-
-	// Sunglasses neutralise the sensitive eyes. No glare, but also no cozy-dark bonus.
-	if(kobold.get_eye_protection() >= 0)
-		kobold.clear_mood_event("kobold_bright_light")
-		kobold.clear_mood_event("kobold_comfy_dark")
-		return
-
-	var/turf/kobold_turf = get_turf(kobold)
-	if(isnull(kobold_turf))
-		return
-
-	var/light_amount = kobold_turf.get_lumcount()
-
-	if(light_amount >= KOBOLD_BRIGHT_LIGHT_THRESHOLD)
-		kobold.clear_mood_event("kobold_comfy_dark")
-		kobold.add_mood_event("kobold_bright_light", /datum/mood_event/kobold_bright_light)
-		// Periodic squinting — short, capped blur so it doesn't stack into blindness
-		if(SPT_PROB(KOBOLD_SQUINT_PROB, seconds_per_tick))
-			kobold.adjust_eye_blur_up_to(2 SECONDS, 4 SECONDS)
-	else if(light_amount < KOBOLD_COMFY_DARK_THRESHOLD)
-		kobold.clear_mood_event("kobold_bright_light")
-		kobold.add_mood_event("kobold_comfy_dark", /datum/mood_event/kobold_comfy_dark)
-	else
-		// Dim — neither painful nor cozy
-		kobold.clear_mood_event("kobold_bright_light")
-		kobold.clear_mood_event("kobold_comfy_dark")
 
 /// The Urges. Go too long without taking something and the paws get itchy.
 /datum/species/kobold/proc/handle_kleptomaniac_urges(mob/living/carbon/human/kobold)
@@ -205,7 +165,7 @@
 	human.dna.features[FEATURE_MUTANT_COLOR] = "#8a7a5c" // Muddy cave brown
 	human.update_body(is_creating = TRUE)
 
-// Reuse lizard vocals — they're reptilian enough, and the squeakier screams fit a small creature
+// Reuse lizard vocals — they're reptilian enough
 /datum/species/kobold/get_hiss_sound(mob/living/carbon/human/kobold)
 	return 'sound/mobs/humanoids/lizard/lizard_hiss.ogg'
 
@@ -245,9 +205,9 @@
 // ===========================
 
 /datum/species/kobold/get_physical_attributes()
-	return "Kobolds are tiny, scrawny cave reptiles. They see perfectly in pitch darkness but are nearly \
-		blinded by bright light, can't hold their own in a grapple, and are physically incapable of reading, \
-		writing, or forming any word that isn't kobold yapping."
+	return "Kobolds are tiny, scrawny cave reptiles. They see perfectly in pitch darkness but are \
+		blinded and colorblind in bright light. They can't hold their own in a grapple, are \
+		physically incapable of reading or writing, and speak only in incomprehensible yapping."
 
 /datum/species/kobold/get_species_description()
 	return "Small, cowardly, cave-dwelling creatures with an insatiable compulsion to steal. \
@@ -287,7 +247,7 @@
 			SPECIES_PERK_ICON = FA_ICON_EYE,
 			SPECIES_PERK_NAME = "Nocturnal",
 			SPECIES_PERK_DESC = "Kobolds see perfectly in complete darkness. Bright light, however, \
-				is blinding and painful. Wear sunglasses — or stick to the shadows.",
+				causes blurring and temporary colorblindness. Wear sunglasses — or stick to the shadows.",
 		),
 		list(
 			SPECIES_PERK_TYPE = SPECIES_POSITIVE_PERK,
@@ -295,6 +255,13 @@
 			SPECIES_PERK_NAME = "Cave Skulker",
 			SPECIES_PERK_DESC = "Kobolds step lightly, scramble over obstacles fast, and instinctively \
 				dive into the nearest hiding spot when something grabs at them.",
+		),
+		list(
+			SPECIES_PERK_TYPE = SPECIES_POSITIVE_PERK,
+			SPECIES_PERK_ICON = FA_ICON_HAND_SPARKLES,
+			SPECIES_PERK_NAME = "Born Thief",
+			SPECIES_PERK_DESC = "Kobolds are natural thieves. They steal faster and more quietly than \
+				any other race.",
 		),
 		list(
 			SPECIES_PERK_TYPE = SPECIES_NEUTRAL_PERK,
@@ -387,8 +354,7 @@
 		),
 	)
 
-// DF kobold names are nonsense compounds — Stozusnolumstolbin, Jlikristromgus, etc.
-// No surnames. Kobolds don't have family structure in any meaningful sense.
+// DF kobold names are nonsense compounds. No surnames — kobolds have no family structure.
 GLOBAL_LIST_INIT(kobold_name_syllables, list(
 	"bil", "bus", "dan", "dak", "dro", "dus", "fli", "gno",
 	"gus", "jik", "jli", "ker", "kit", "kro", "lis", "mog",
@@ -425,83 +391,142 @@ GLOBAL_LIST_INIT(kobold_name_syllables, list(
 // ===================
 
 /**
- * The kobold tongue is the hard physical enforcement of the language barrier.
- * get_possible_languages() returns ONLY kobold — even with a language implant, the throat
- * just can't make those sounds.
+ * Kobold brain: carries TRAIT_ILLITERATE directly so that it travels with the organ.
  *
- * Transplant edge cases work correctly:
+ * Putting illiteracy on the brain rather than the species datum means:
+ *   - A transplanted human brain lets a kobold read (they got smarter, narratively fine)
+ *   - A kobold brain in a human makes them illiterate (it's a dumb lizard brain, what did you expect)
+ * This is the correct behaviour for an organ-level trait.
+ */
+/obj/item/organ/brain/kobold
+	name = "kobold brain"
+	desc = "Tiny, surprisingly dense, and completely devoid of any understanding of the written word. \
+		Studies suggest it is structurally incapable of processing abstract symbols."
+	organ_traits = list(TRAIT_ILLITERATE)
+
+/**
+ * The kobold tongue enforces the language barrier at the organ level.
+ * get_possible_languages() returns ONLY kobold — the throat just can't make other sounds.
+ *
+ * No speechmod. No regex. Kobolds don't speak anything intelligible to begin with,
+ * so mangling non-kobold words would only matter if someone gave them a foreign tongue via surgery,
+ * at which point they should just speak normally (it's a normal tongue now).
+ *
+ * Transplant edge cases:
  *   - Kobold tongue into a human: human can only yap. Hilarious.
- *   - Human tongue into a kobold: kobold can speak common but loses kobold. A tradeoff.
+ *   - Human tongue into a kobold: kobold can speak common but loses kobold. A fair trade.
  */
 /obj/item/organ/tongue/kobold
 	name = "kobold tongue"
 	desc = "A thin, twitchy little tongue. It looks incapable of producing anything but sharp yips."
 	say_mod = "yaps"
 	organ_traits = list(TRAIT_SPEAKS_CLEARLY)
-	modifies_speech = TRUE
 	liked_foodtypes = MEAT | GORE | GROSS | BUGS // Cave scavengers. They eat whatever.
 	disliked_foodtypes = VEGETABLES | DAIRY | CLOTH
 	toxic_foodtypes = TOXIC
 	languages_native = list(/datum/language/kobold)
-	/// Primitive grammar mangling for when this tongue somehow ends up speaking non-kobold.
-	/// Kobolds drop articles, have no past tense, and first-person is always "me".
-	var/static/list/kobold_speech_replacements = list(
-		// Contractions FIRST — before \bI\b eats them
-		new /regex(@"\bI'm\b", "g") = "me is",
-		new /regex(@"\bI'M\b", "g") = "ME IS",
-		new /regex(@"\bI've\b", "g") = "me has",
-		new /regex(@"\bI'll\b", "g") = "me gonna",
-		new /regex(@"\bI\b", "g") = "me",
-		new /regex(@"\bmy\b", "g") = "me",
-		new /regex(@"\bMy\b", "g") = "Me",
-		new /regex(@"\bMY\b", "g") = "ME",
-		new /regex(@"\bmine\b", "g") = "me's",
-		new /regex(@"\bam\b", "g") = "is",
-		new /regex(@"\bare\b", "g") = "is",
-		new /regex(@"\bwas\b", "g") = "is",
-		new /regex(@"\bwere\b", "g") = "is",
-		// Drop articles — \s eats the trailing space so we don't get doubles
-		new /regex(@"\bthe\s", "g") = "",
-		new /regex(@"\bThe\s", "g") = "",
-		new /regex(@"\bTHE\s", "g") = "",
-		new /regex(@"\ba\s", "g") = "",
-		new /regex(@"\bA\s", "g") = "",
-		new /regex(@"\ban\s", "g") = "",
-		new /regex(@"\bAn\s", "g") = "",
-		// Emphatic repetition — kobolds double up on important words
-		new /regex(@"\byes\b", "g") = "yes yes",
-		new /regex(@"\bYes\b", "g") = "Yes yes",
-		new /regex(@"\bno\b", "g") = "no no",
-		new /regex(@"\bNo\b", "g") = "No no",
-		new /regex(@"\bgood\b", "g") = "good good",
-		new /regex(@"\bbad\b", "g") = "bad bad",
-	)
 
-/obj/item/organ/tongue/kobold/Initialize(mapload)
-	. = ..()
-	AddComponent(/datum/component/speechmod, replacements = kobold_speech_replacements, should_modify_speech = CALLBACK(src, PROC_REF(should_modify_speech)))
-
-/// The hard restriction. Parent would return the standard language set — we replace it entirely.
+/// Hard restriction: only kobold is physically producible by this throat.
 /obj/item/organ/tongue/kobold/get_possible_languages()
 	return list(/datum/language/kobold)
 
 /**
- * Kobold eyes: built for total darkness, ruined by light.
+ * Kobold eyes: built for total darkness, punished by light.
  *
- * flash_protect -1 means any flash hits one step harder than normal. Combined with the
- * spec_life glare check (which fires when net eye protection < 0), well-lit areas are
- * genuinely unpleasant. Sunglasses (+1) bring the net to 0 and kill the glare — a kobold
- * in shades is a functional kobold.
+ * In bright light (above KOBOLD_BRIGHT_LIGHT_THRESHOLD turf lumcount), the eyes:
+ *   - Periodically apply a brief blur (squinting)
+ *   - Apply a monochrome client colour (everything washes out)
+ *   - Add a bad mood event
+ * Sunglasses (flash_protect >= 0, net 0 with our -1 base) fully negate the effect.
+ *
+ * Behaves like /obj/item/organ/eyes/night_vision/maintenance_adapted in structure,
+ * but uses blur + colorblind instead of organ damage, so the effect is temporary
+ * and reversible rather than a death spiral.
+ *
+ * The on_life proc handles the per-tick effect. We register/unregister it cleanly
+ * on insert/remove so there's no dangling state.
  */
 /obj/item/organ/eyes/kobold
 	name = "kobold eyes"
 	desc = "Enormous, dark-adapted eyes with slitted pupils. They glitter in shadow and \
 		shrink to agonised pinpricks in the light."
+	icon_state = "lizard_eyes"   // Reuse lizard eye icon — kobolds are lizard-adjacent
+	synchronized_blinking = FALSE
+	// Sensitive to flash — any flash hits one step harder. Net with sunglasses (+1) = 0, cancels the glare.
 	flash_protect = FLASH_PROTECTION_SENSITIVE
 	organ_traits = list(
-		TRAIT_TRUE_NIGHT_VISION,  // Full darkvision — they live in zero-light caves, this is the whole trade
-		TRAIT_REFLECTIVE_EYES,    // Eyeshine in dim light, like a cat. Pure flavour.
+		TRAIT_TRUE_NIGHT_VISION, // Full darkvision — they live in zero-light caves
+		TRAIT_REFLECTIVE_EYES,   // Eyeshine in dim light. Pure flavour.
 	)
+	pupils_name = "slit pupils"
+	penlight_message = "have vertically slit pupils that contract sharply under the light"
+
+/obj/item/organ/eyes/kobold/on_mob_insert(mob/living/carbon/receiver, special, movement_flags)
+	. = ..()
+	// We use on_life for the per-tick light check instead of a signal,
+	// because lumcount needs to be polled — there's no signal for "turf got brighter".
+	// on_life is already called by the organ system while inserted, so no extra registration needed.
+
+/obj/item/organ/eyes/kobold/on_mob_remove(mob/living/carbon/organ_owner, special, movement_flags)
+	// Clean up any lingering light sensitivity effects when the eyes come out.
+	// This covers surgery, species change, and death-state organ removal.
+	_clear_light_effects(organ_owner)
+	return ..()
+
+/**
+ * Per-tick light sensitivity handler.
+ *
+ * Called by the organ's own on_life proc (inherited from /obj/item/organ).
+ * Checks the owner's current turf lumcount and applies or clears effects accordingly.
+ */
+/obj/item/organ/eyes/kobold/on_life(seconds_per_tick, times_fired)
+	. = ..()
+	if(!owner || owner.stat >= UNCONSCIOUS)
+		_clear_light_effects(owner)
+		return
+
+	// Sunglasses or better cancel the effect entirely. flash_protect -1 + eyewear +1 = 0.
+	if(owner.get_eye_protection() >= FLASH_PROTECTION_NONE)
+		_clear_light_effects(owner)
+		return
+
+	var/turf/standing = get_turf(owner)
+	if(isnull(standing))
+		return
+
+	var/light_amount = standing.get_lumcount()
+
+	if(light_amount >= KOBOLD_BRIGHT_LIGHT_THRESHOLD)
+		// We're in the bright zone. Apply misery.
+		if(!HAS_TRAIT_FROM_ONLY(owner, TRAIT_COLORBLIND, /obj/item/organ/eyes/kobold))
+			owner.add_client_colour(/datum/client_colour/monochrome, REF(src))
+			ADD_TRAIT(owner, TRAIT_COLORBLIND, /obj/item/organ/eyes/kobold)
+		owner.add_mood_event("kobold_bright_light", /datum/mood_event/kobold_bright_light)
+		owner.clear_mood_event("kobold_comfy_dark")
+		// Periodic squinting — short, capped blur so it doesn't stack into true blindness
+		if(SPT_PROB(KOBOLD_SQUINT_PROB, seconds_per_tick))
+			owner.adjust_eye_blur_up_to(2 SECONDS, 4 SECONDS)
+
+	else if(light_amount < KOBOLD_COMFY_DARK_THRESHOLD)
+		// Cozy dark. Clear light pain.
+		_clear_light_effects(owner)
+		owner.add_mood_event("kobold_comfy_dark", /datum/mood_event/kobold_comfy_dark)
+
+	else
+		// Dim — neither painful nor cozy. Clear everything.
+		_clear_light_effects(owner)
+
+/// Removes all light-sensitivity side effects from the target mob.
+/// Safe to call even if the effects aren't currently applied.
+/obj/item/organ/eyes/kobold/proc/_clear_light_effects(mob/living/carbon/target)
+	if(isnull(target))
+		return
+	// Only remove OUR colorblind application, not any from quirks or other sources
+	if(HAS_TRAIT_FROM_ONLY(target, TRAIT_COLORBLIND, /obj/item/organ/eyes/kobold))
+		target.remove_client_colour(REF(src))
+		REMOVE_TRAIT(target, TRAIT_COLORBLIND, /obj/item/organ/eyes/kobold)
+	target.clear_mood_event("kobold_bright_light")
+	target.clear_mood_event("kobold_comfy_dark")
 
 #undef KOBOLD_BRIGHT_LIGHT_THRESHOLD
 #undef KOBOLD_COMFY_DARK_THRESHOLD
