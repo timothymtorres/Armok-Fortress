@@ -43,7 +43,7 @@
 
 	mutantbrain = /obj/item/organ/brain/lizard/kobold
 	mutanttongue = /obj/item/organ/tongue/kobold
-	mutanteyes = /obj/item/organ/eyes/night_vision/kobold
+	mutanteyes = /obj/item/organ/eyes/kobold
 
 	species_language_holder = /datum/language_holder/kobold
 
@@ -269,17 +269,6 @@ GLOBAL_LIST_INIT(kobold_name_syllables, list(
 		/datum/language/kobold = list(LANGUAGE_ATOM),
 	)
 
-// =============================
-// =   C L I E N T  C O L O U R =
-// =============================
-
-// Subtype rather than using /monochrome directly so the TRAIT_COLORBLIND source
-// (applied in monochrome/New() using `type`) is distinct from the quirk's. Otherwise a
-// colourblind-quirk kobold walking into the light would get tangled trait sources.
-/datum/client_colour/monochrome/kobold_glare
-	fade_in = 1 SECONDS
-	fade_out = 1.5 SECONDS // Recovery is a touch slower than onset — eyes need a moment
-
 // ===================
 // =   O R G A N S   =
 // ===================
@@ -323,6 +312,20 @@ GLOBAL_LIST_INIT(kobold_name_syllables, list(
 /obj/item/organ/tongue/kobold/get_possible_languages()
 	return list(/datum/language/kobold)
 
+// =============================
+// =   C L I E N T  C O L O U R =
+// =============================
+
+/datum/client_colour/monochrome/kobold_glare
+	fade_in = 8 SECONDS
+	fade_out = 12 SECONDS // Eyes need a good while to readjust coming back out of the light
+
+// ===================
+// =   O R G A N S   =
+// ===================
+
+// ... brain and tongue stay exactly as written ...
+
 /**
  * Kobold eyes. Modelled on maintenance_adapted, but instead of taking damage in light
  * they go blurry and lose colour perception.
@@ -331,48 +334,41 @@ GLOBAL_LIST_INIT(kobold_name_syllables, list(
  * are -1, so sunglasses (+1) bring you to 0 and you're fine. That's the intended counterplay:
  * a kobold in shades is a functional kobold. Welding goggles are overkill.
  *
- * Inherits the night_vision toggle action, so players can step through low/med/high
- * dark-adaptation levels. Think of it as adjusting how wide their pupils are.
+ * No night_vision subtype — kobolds have full, unconditional true darkvision. There is
+ * no toggle, no colour cast, no cutoff levels. It is simply dark, and they can see.
  */
-/obj/item/organ/eyes/night_vision/kobold
+/obj/item/organ/eyes/kobold
 	name = "kobold eyes"
 	desc = "Enormous, dark-adapted eyes with slitted pupils. They glitter in shadow and \
 		shrink to agonised pinpricks in the light."
 	icon_state = "lizard_eyes"
 	synchronized_blinking = FALSE
 	flash_protect = FLASH_PROTECTION_SENSITIVE
-	organ_traits = list(TRAIT_REFLECTIVE_EYES) // Eyeshine in dim light, like a cat
+	organ_traits = list(
+		TRAIT_TRUE_NIGHT_VISION, // Unconditional. No toggle, no levels. They live in pitch black.
+		TRAIT_REFLECTIVE_EYES,   // Eyeshine in dim light
+	)
 
 	pupils_name = "slit pupils"
 	penlight_message = "shrink to pained slits, watering under the beam"
-
-	// Warm yellow-green cast — the colour of the only light a cave kobold ever sees
-	// (bioluminescent cave moss, distant torches, that sort of thing)
-	low_light_cutoff = list(12, 16, 4)
-	medium_light_cutoff = list(22, 28, 8)
-	high_light_cutoff = list(35, 42, 15)
 
 	/// Whether we're currently applying the glare effect. Avoids re-applying
 	/// (and re-firing the to_chat) every tick while standing under a lamp.
 	var/glared = FALSE
 
-/obj/item/organ/eyes/night_vision/kobold/on_mob_insert(mob/living/carbon/receiver, special, movement_flags)
+/obj/item/organ/eyes/kobold/on_mob_insert(mob/living/carbon/receiver, special, movement_flags)
 	. = ..()
-	glared = FALSE // Fresh eyes, fresh state
+	glared = FALSE
 
-/obj/item/organ/eyes/night_vision/kobold/on_mob_remove(mob/living/carbon/organ_owner, special, movement_flags)
-	// Clean up unconditionally. Don't trust the state var — organ removal can happen
-	// in weird contexts and we don't want a monochrome filter stuck on someone forever.
+/obj/item/organ/eyes/kobold/on_mob_remove(mob/living/carbon/organ_owner, special, movement_flags)
 	organ_owner.remove_client_colour(REF(src))
 	organ_owner.clear_mood_event("kobold_bright_light")
 	glared = FALSE
 	return ..()
 
-/obj/item/organ/eyes/night_vision/kobold/on_life(seconds_per_tick)
+/obj/item/organ/eyes/kobold/on_life(seconds_per_tick)
 	. = ..()
 
-	// Same gate pattern as maintenance_adapted: net protection still sensitive,
-	// can actually see, not inside a locker, and there's meaningful light nearby.
 	var/in_painful_light = owner.get_eye_protection() <= FLASH_PROTECTION_SENSITIVE \
 		&& !owner.is_blind() \
 		&& isturf(owner.loc) \
@@ -381,28 +377,24 @@ GLOBAL_LIST_INIT(kobold_name_syllables, list(
 	if(in_painful_light)
 		if(!glared)
 			start_glare()
-		// Rolling blur, capped so it never stacks to full blindness — just persistently bad
+		// Rolling blur, capped so it never stacks to full blindness
 		owner.adjust_eye_blur_up_to(3 SECONDS, 6 SECONDS)
 	else if(glared)
 		stop_glare()
 
-/obj/item/organ/eyes/night_vision/kobold/proc/start_glare()
+/obj/item/organ/eyes/kobold/proc/start_glare()
 	glared = TRUE
-	// REF(src) as the source: guaranteed unique to this organ instance.
-	// If someone somehow has two sets of kobold eyes... well, good for them.
 	owner.add_client_colour(/datum/client_colour/monochrome/kobold_glare, REF(src))
 	owner.add_mood_event("kobold_bright_light", /datum/mood_event/kobold_bright_light)
-	to_chat(owner, span_warning("The light stabs into your eyes — everything washes out to grey."))
+	to_chat(owner, span_warning("The light stabs into your eyes — everything slowly washes out to grey."))
 
-/obj/item/organ/eyes/night_vision/kobold/proc/stop_glare()
+/obj/item/organ/eyes/kobold/proc/stop_glare()
 	glared = FALSE
 	owner.remove_client_colour(REF(src))
 	owner.clear_mood_event("kobold_bright_light")
-	to_chat(owner, span_notice("Colour seeps back into the world as your pupils relax."))
+	to_chat(owner, span_notice("Colour slowly seeps back into the world as your pupils readjust."))
 
-// Getting a penlight shone directly into them is worse than ambient glare.
-// No organ damage like maintenance_adapted — just a big spike of blur.
-/obj/item/organ/eyes/night_vision/kobold/penlight_examine(mob/living/viewer, obj/item/examtool)
+/obj/item/organ/eyes/kobold/penlight_examine(mob/living/viewer, obj/item/examtool)
 	if(!owner.is_blind() && owner.get_eye_protection() <= FLASH_PROTECTION_SENSITIVE)
 		to_chat(owner, span_danger("Gah! The beam! Right in the eyes!"))
 		owner.adjust_eye_blur_up_to(8 SECONDS * examtool.light_power, 12 SECONDS)
