@@ -312,30 +312,41 @@ GLOBAL_LIST_INIT(kobold_name_syllables, list(
 /obj/item/organ/tongue/kobold/get_possible_languages()
 	return list(/datum/language/kobold)
 
+// Top of file — add these defines
+/// How many seconds of light exposure before glare hits full strength (and how long to
+/// fully recover in the dark). Kept symmetrical so the client_colour fade stays roughly in step.
+#define KOBOLD_GLARE_RAMP_SECONDS 6
+/// Blur cap at maximum glare saturation
+#define KOBOLD_GLARE_MAX_BLUR (6 SECONDS)
+
 // =============================
 // =   C L I E N T  C O L O U R =
 // =============================
 
 /datum/client_colour/monochrome/kobold_glare
-	fade_in = 8 SECONDS
-	fade_out = 12 SECONDS // Eyes need a good while to readjust coming back out of the light
+	// Tuned to roughly match KOBOLD_GLARE_RAMP_SECONDS. We trigger add/remove the moment
+	// buildup crosses zero, and the filter animates from there — so these durations ARE
+	// the perceived onset/recovery time for the grey-out.
+	fade_in = 5 SECONDS
+	fade_out = 5 SECONDS
 
 // ===================
 // =   O R G A N S   =
 // ===================
 
-// ... brain and tongue stay exactly as written ...
+// Brain and tongue unchanged from last revision.
 
 /**
- * Kobold eyes. Modelled on maintenance_adapted, but instead of taking damage in light
- * they go blurry and lose colour perception.
+ * Kobold eyes. Pure night-vision via TRAIT_TRUE_NIGHT_VISION — no cutoff lists, no toggle,
+ * just permanent full dark-sight.
  *
- * The glare triggers when net eye protection is still in the SENSITIVE range — these eyes
- * are -1, so sunglasses (+1) bring you to 0 and you're fine. That's the intended counterplay:
- * a kobold in shades is a functional kobold. Welding goggles are overkill.
+ * The glare doesn't slam on/off. It accumulates. Stand in light and a buildup counter
+ * climbs over ~6 seconds; the monochrome filter fades in alongside it and blur scales
+ * with how saturated you are. Step into shadow and it drains back out at the same rate.
+ * A quick dash through a lit hallway barely registers. Loitering under a lamp is misery.
  *
- * No night_vision subtype — kobolds have full, unconditional true darkvision. There is
- * no toggle, no colour cast, no cutoff levels. It is simply dark, and they can see.
+ * Sunglasses still work the same way: flash_protect -1 + sunglasses +1 = net 0, gate
+ * doesn't trip, no buildup.
  */
 /obj/item/organ/eyes/kobold
 	name = "kobold eyes"
@@ -345,57 +356,81 @@ GLOBAL_LIST_INIT(kobold_name_syllables, list(
 	synchronized_blinking = FALSE
 	flash_protect = FLASH_PROTECTION_SENSITIVE
 	organ_traits = list(
-		TRAIT_TRUE_NIGHT_VISION, // Unconditional. No toggle, no levels. They live in pitch black.
-		TRAIT_REFLECTIVE_EYES,   // Eyeshine in dim light
+		TRAIT_TRUE_NIGHT_VISION,
+		TRAIT_REFLECTIVE_EYES,
 	)
 
 	pupils_name = "slit pupils"
 	penlight_message = "shrink to pained slits, watering under the beam"
 
-	/// Whether we're currently applying the glare effect. Avoids re-applying
-	/// (and re-firing the to_chat) every tick while standing under a lamp.
+	/// Whether the monochrome filter is currently applied. Just saves re-firing the
+	/// to_chat every tick — buildup does the real state tracking.
 	var/glared = FALSE
+	/// Seconds of accumulated light exposure, 0 to KOBOLD_GLARE_RAMP_SECONDS.
+	/// Climbs in light, drains in dark. Everything scales off this.
+	var/glare_buildup = 0
 
 /obj/item/organ/eyes/kobold/on_mob_insert(mob/living/carbon/receiver, special, movement_flags)
 	. = ..()
 	glared = FALSE
+	glare_buildup = 0
 
 /obj/item/organ/eyes/kobold/on_mob_remove(mob/living/carbon/organ_owner, special, movement_flags)
+	// Clean up unconditionally — don't trust state vars during organ removal
 	organ_owner.remove_client_colour(REF(src))
 	organ_owner.clear_mood_event("kobold_bright_light")
 	glared = FALSE
+	glare_buildup = 0
 	return ..()
 
 /obj/item/organ/eyes/kobold/on_life(seconds_per_tick)
 	. = ..()
 
+	// Same gate as maintenance_adapted: net protection still in the sensitive range,
+	// can actually see, not inside a locker, and there's real light nearby.
 	var/in_painful_light = owner.get_eye_protection() <= FLASH_PROTECTION_SENSITIVE \
 		&& !owner.is_blind() \
 		&& isturf(owner.loc) \
 		&& owner.has_light_nearby(light_amount = 0.5)
 
+	// Ramp the buildup. seconds_per_tick keeps this wall-clock-accurate regardless of SSmobs speed.
 	if(in_painful_light)
+		glare_buildup = min(glare_buildup + seconds_per_tick, KOBOLD_GLARE_RAMP_SECONDS)
+	else
+		glare_buildup = max(glare_buildup - seconds_per_tick, 0)
+
+	// Fire the monochrome transition the moment buildup crosses zero. The client_colour's
+	// own fade_in/fade_out handles the visual ramp from there — we just flip the switch.
+	if(glare_buildup > 0)
 		if(!glared)
 			start_glare()
-		// Rolling blur, capped so it never stacks to full blindness
-		owner.adjust_eye_blur_up_to(3 SECONDS, 6 SECONDS)
 	else if(glared)
 		stop_glare()
+
+	// Blur scales with saturation. At full buildup: refreshing toward a 6s cap. At half:
+	// 3s cap. Ramping down doesn't actively shorten existing blur — it just stops topping
+	// it up so aggressively, and the status effect decays on its own.
+	if(glare_buildup > 0)
+		var/intensity = glare_buildup / KOBOLD_GLARE_RAMP_SECONDS
+		owner.adjust_eye_blur_up_to(KOBOLD_GLARE_MAX_BLUR * intensity * 0.5, KOBOLD_GLARE_MAX_BLUR * intensity)
 
 /obj/item/organ/eyes/kobold/proc/start_glare()
 	glared = TRUE
 	owner.add_client_colour(/datum/client_colour/monochrome/kobold_glare, REF(src))
 	owner.add_mood_event("kobold_bright_light", /datum/mood_event/kobold_bright_light)
-	to_chat(owner, span_warning("The light stabs into your eyes — everything slowly washes out to grey."))
+	to_chat(owner, span_warning("The light stabs into your eyes — colour begins bleeding away."))
 
 /obj/item/organ/eyes/kobold/proc/stop_glare()
 	glared = FALSE
 	owner.remove_client_colour(REF(src))
 	owner.clear_mood_event("kobold_bright_light")
-	to_chat(owner, span_notice("Colour slowly seeps back into the world as your pupils readjust."))
+	to_chat(owner, span_notice("Colour slowly seeps back as your pupils recover."))
 
+// Penlight directly in the eyes spikes the buildup instead of just blurring. One good
+// shine can put you most of the way to saturated even if you were comfy a second ago.
 /obj/item/organ/eyes/kobold/penlight_examine(mob/living/viewer, obj/item/examtool)
 	if(!owner.is_blind() && owner.get_eye_protection() <= FLASH_PROTECTION_SENSITIVE)
 		to_chat(owner, span_danger("Gah! The beam! Right in the eyes!"))
-		owner.adjust_eye_blur_up_to(8 SECONDS * examtool.light_power, 12 SECONDS)
+		glare_buildup = min(glare_buildup + (4 * examtool.light_power), KOBOLD_GLARE_RAMP_SECONDS)
+		owner.adjust_eye_blur_up_to(6 SECONDS * examtool.light_power, 10 SECONDS)
 	return span_notice("[owner.p_Their()] eyes [penlight_message].")
