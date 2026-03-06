@@ -312,31 +312,19 @@ GLOBAL_LIST_INIT(kobold_name_syllables, list(
 /obj/item/organ/tongue/kobold/get_possible_languages()
 	return list(/datum/language/kobold)
 
-// =============================
-// =   C L I E N T  C O L O U R =
-// =============================
+/// Lumcount threshold. 0.75 is properly bright — full overhead station lighting territory.
+/// A penlight or pocket lighter in an otherwise-dark room won't come close to this.
+#define KOBOLD_GLARE_LIGHT_THRESHOLD 0.75
 
-/datum/client_colour/monochrome/kobold_glare
-	fade_in = 8 SECONDS
-	fade_out = 12 SECONDS // Eyes need a good while to readjust coming back out of the light
+/// Filter ID on the game plane masters. Stays attached at identity between glare
+/// cycles (a no-op identity matrix costs nothing and means we never have to
+/// re-add it, which is what lets the fade-out actually work).
+#define KOBOLD_GLARE_FILTER "kobold_eye_glare"
+#define KOBOLD_GLARE_FADE_IN (8 SECONDS)
+#define KOBOLD_GLARE_FADE_OUT (12 SECONDS)
+/// High priority = applied late in the stack = desaturation sits on top of everything else.
+#define KOBOLD_GLARE_FILTER_PRIORITY 50
 
-// ===================
-// =   O R G A N S   =
-// ===================
-
-// ... brain and tongue stay exactly as written ...
-
-/**
- * Kobold eyes. Modelled on maintenance_adapted, but instead of taking damage in light
- * they go blurry and lose colour perception.
- *
- * The glare triggers when net eye protection is still in the SENSITIVE range — these eyes
- * are -1, so sunglasses (+1) bring you to 0 and you're fine. That's the intended counterplay:
- * a kobold in shades is a functional kobold. Welding goggles are overkill.
- *
- * No night_vision subtype — kobolds have full, unconditional true darkvision. There is
- * no toggle, no colour cast, no cutoff levels. It is simply dark, and they can see.
- */
 /obj/item/organ/eyes/kobold
 	name = "kobold eyes"
 	desc = "Enormous, dark-adapted eyes with slitted pupils. They glitter in shadow and \
@@ -345,15 +333,15 @@ GLOBAL_LIST_INIT(kobold_name_syllables, list(
 	synchronized_blinking = FALSE
 	flash_protect = FLASH_PROTECTION_SENSITIVE
 	organ_traits = list(
-		TRAIT_TRUE_NIGHT_VISION, // Unconditional. No toggle, no levels. They live in pitch black.
-		TRAIT_REFLECTIVE_EYES,   // Eyeshine in dim light
+		TRAIT_TRUE_NIGHT_VISION,
+		TRAIT_REFLECTIVE_EYES,
 	)
 
 	pupils_name = "slit pupils"
 	penlight_message = "shrink to pained slits, watering under the beam"
 
-	/// Whether we're currently applying the glare effect. Avoids re-applying
-	/// (and re-firing the to_chat) every tick while standing under a lamp.
+	/// Gate for the to_chat spam and trait/mood bookkeeping. The filter itself
+	/// is idempotent either way, this just stops us re-announcing every tick.
 	var/glared = FALSE
 
 /obj/item/organ/eyes/kobold/on_mob_insert(mob/living/carbon/receiver, special, movement_flags)
@@ -361,7 +349,12 @@ GLOBAL_LIST_INIT(kobold_name_syllables, list(
 	glared = FALSE
 
 /obj/item/organ/eyes/kobold/on_mob_remove(mob/living/carbon/organ_owner, special, movement_flags)
-	organ_owner.remove_client_colour(REF(src))
+	// Only place we ever actually REMOVE the filter. Between glare cycles it just
+	// sits at identity doing nothing.
+	if(organ_owner.hud_used)
+		for(var/atom/movable/screen/plane_master/game_plane as anything in organ_owner.hud_used.get_true_plane_masters(RENDER_PLANE_GAME))
+			game_plane.remove_filter(KOBOLD_GLARE_FILTER)
+	REMOVE_TRAIT(organ_owner, TRAIT_COLORBLIND, REF(src))
 	organ_owner.clear_mood_event("kobold_bright_light")
 	glared = FALSE
 	return ..()
@@ -372,30 +365,67 @@ GLOBAL_LIST_INIT(kobold_name_syllables, list(
 	var/in_painful_light = owner.get_eye_protection() <= FLASH_PROTECTION_SENSITIVE \
 		&& !owner.is_blind() \
 		&& isturf(owner.loc) \
-		&& owner.has_light_nearby(light_amount = 0.5)
+		&& owner.has_light_nearby(light_amount = KOBOLD_GLARE_LIGHT_THRESHOLD)
 
 	if(in_painful_light)
 		if(!glared)
 			start_glare()
-		// Rolling blur, capped so it never stacks to full blindness
-		owner.adjust_eye_blur_up_to(3 SECONDS, 6 SECONDS)
+		owner.adjust_eye_blur_up_to(2 SECONDS, 10 SECONDS)
 	else if(glared)
 		stop_glare()
 
+/**
+ * Why we're not using /datum/client_colour here:
+ *
+ * client_colour's fade_out is architecturally broken — Destroy() removes the datum from
+ * the list BEFORE calling animate_client_colour(), and animate_client_colour() always
+ * rebuilds filters from scratch (remove all → add blank identity → transition to target).
+ * By the time the animation runs, our greyscale is gone from the list, so the filter just
+ * gets ripped off instantly in the remove step.
+ *
+ * Driving the filter directly fixes this: transition_filter() animates from the filter's
+ * CURRENT state to the target. We add the filter once (at identity, invisible), transition
+ * it to greyscale on glare, transition back to identity on recovery, and only actually
+ * remove it when the organ leaves the body.
+ *
+ * Bonus: walking back into light mid-fade-out just smoothly reverses from wherever the
+ * transition had got to. No pop, no timer juggling.
+ */
 /obj/item/organ/eyes/kobold/proc/start_glare()
 	glared = TRUE
-	owner.add_client_colour(/datum/client_colour/monochrome/kobold_glare, REF(src))
+	ADD_TRAIT(owner, TRAIT_COLORBLIND, REF(src))
 	owner.add_mood_event("kobold_bright_light", /datum/mood_event/kobold_bright_light)
-	to_chat(owner, span_warning("The light stabs into your eyes — everything slowly washes out to grey."))
+	to_chat(owner, span_warning("The light stabs into your eyes — colour starts bleeding out of the world."))
+
+	if(isnull(owner.hud_used))
+		return
+	for(var/atom/movable/screen/plane_master/game_plane as anything in owner.hud_used.get_true_plane_masters(RENDER_PLANE_GAME))
+		// Might already exist from a previous glare cycle (sitting at identity). Only add if fresh.
+		if(isnull(game_plane.get_filter(KOBOLD_GLARE_FILTER)))
+			game_plane.add_filter(KOBOLD_GLARE_FILTER, KOBOLD_GLARE_FILTER_PRIORITY, color_matrix_filter())
+		// Transition from wherever it is now → greyscale. Works from identity OR mid-fade-out.
+		game_plane.transition_filter(KOBOLD_GLARE_FILTER, color_matrix_filter(COLOR_MATRIX_GRAYSCALE), KOBOLD_GLARE_FADE_IN)
 
 /obj/item/organ/eyes/kobold/proc/stop_glare()
 	glared = FALSE
-	owner.remove_client_colour(REF(src))
+	REMOVE_TRAIT(owner, TRAIT_COLORBLIND, REF(src))
 	owner.clear_mood_event("kobold_bright_light")
-	to_chat(owner, span_notice("Colour slowly seeps back into the world as your pupils readjust."))
+	to_chat(owner, span_notice("Colour slowly seeps back as your pupils readjust."))
+
+	if(isnull(owner.hud_used))
+		return
+	for(var/atom/movable/screen/plane_master/game_plane as anything in owner.hud_used.get_true_plane_masters(RENDER_PLANE_GAME))
+		// Transition from current (greyscale or mid-fade-in) → identity. Filter stays attached.
+		game_plane.transition_filter(KOBOLD_GLARE_FILTER, color_matrix_filter(), KOBOLD_GLARE_FADE_OUT)
 
 /obj/item/organ/eyes/kobold/penlight_examine(mob/living/viewer, obj/item/examtool)
 	if(!owner.is_blind() && owner.get_eye_protection() <= FLASH_PROTECTION_SENSITIVE)
 		to_chat(owner, span_danger("Gah! The beam! Right in the eyes!"))
 		owner.adjust_eye_blur_up_to(8 SECONDS * examtool.light_power, 12 SECONDS)
 	return span_notice("[owner.p_Their()] eyes [penlight_message].")
+
+#undef KOBOLD_GLARE_LIGHT_THRESHOLD
+#undef KOBOLD_GLARE_FILTER
+#undef KOBOLD_GLARE_FADE_IN
+#undef KOBOLD_GLARE_FADE_OUT
+#undef KOBOLD_GLARE_FILTER_PRIORITY
